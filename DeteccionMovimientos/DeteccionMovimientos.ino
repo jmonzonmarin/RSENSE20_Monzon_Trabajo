@@ -3,61 +3,68 @@
 #include "SPIFFS.h"
 #include "time.h"
 
+//Variable Wifi
 const char* ssid       = "AndroidAP_4359";
 const char* password   = "RSENSE-2020";
 
-const int ledPin = 2;
-String ledState;
-boolean muestraHora = false;
-
-//NTP Server:
-const char* ntpServer = "europe.pool.ntp.org";
-const long  gmtOffset_sec = 3600;
-const int   daylightOffset_sec = 3600;
-tm timeinfo;
-String fecha;
-String estado;
-int timeHour, timeMin, timeSec; 
-
+//Variables tiempos registrados
 int numDato = 0;
-unsigned long tiempoStart; 
-unsigned long tiempoStop;
-unsigned long timeDato;
+unsigned long tiempoDato;
+
+//Variables timers 
+hw_timer_t * timer = NULL;
+hw_timer_t * timeTimer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+boolean dato = false;
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 
-String processor(const String& var){
+//variables auxiliares
+boolean datoStart = false;
+String estado;
+
+String processor(const String& var){        
   Serial.println(var);
   if(var == "STATE"){
     return estado;
   } else if (var == "NUMDATO"){
     return String(numDato);
   } else if (var == "TIMEDATO"){
-    Serial.println(timeDato);
-    return String(timeDato);
+    return String(tiempoDato/1000000*2.5);  //paso de microsegundos a segundos
   }
   return String();
 }
 
-void printLocalTime(){
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("Failed to obtain time");
-    return;
-  }
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+void IRAM_ATTR onTimer(){
+  dato = true;                          //permite tomar valores del acelerometro
 }
- 
+
+void IRAM_ATTR onMicroTimer(){
+  tiempoDato++;                         //cuenta un microsegundo
+}
+
 void setup(){
   // Serial port for debugging purposes
   Serial.begin(115200);
-  pinMode(ledPin, OUTPUT);
 
   // Initialize SPIFFS
   if(!SPIFFS.begin(true)){
     Serial.println("An Error has occurred while mounting SPIFFS");
     return;
   }
+
+  //Timer de frecuencia de datos
+  timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer, &onTimer, true);
+  timerAlarmWrite(timer, 1000000, true);
+  timerAlarmEnable(timer);
+
+  //Timer tiempo datos. 
+  timeTimer = timerBegin(1, 8, true);             //cuenta 10e6 veces por segundo en el timer 1
+  timerAttachInterrupt(timeTimer, &onMicroTimer, true);
+  timerAlarmWrite(timeTimer, 25, true);               //interrupción cuando llegue a 10 o lo que es lo mismo, 1 micro s
+  timerAlarmEnable(timeTimer);
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
@@ -68,10 +75,8 @@ void setup(){
 
   // Print ESP32 Local IP Address
   Serial.println(WiFi.localIP());
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  printLocalTime();
-
-  // Route for root / web page
+  
+    // Route for root / web page
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/index.html", String(), false, processor);
   });
@@ -109,12 +114,15 @@ void setup(){
   });
 
     server.on("/parada", HTTP_GET, [](AsyncWebServerRequest *request){
-    tiempoStop = 10; 
+    datoStart = false;
+    //guarda el fichero en la sd
     request->send(SPIFFS, "/index.html", String(), false, processor);
   });
   
     server.on("/start", HTTP_GET, [](AsyncWebServerRequest *request){
-    tiempoStart = 5;  //guardar momento actual
+    tiempoDato = 0; 
+    datoStart = true; 
+    //crea fichero en la sd
     request->send(SPIFFS, "/index.html", String(), false, processor);
   });
 
@@ -123,7 +131,10 @@ void setup(){
 }
  
 void loop(){
-    delay(1000);
-    Serial.println(tiempoStart);
-    Serial.println(tiempoStop);
+    if (dato && datoStart){
+      Serial.print("Tomo los valores: ");
+      Serial.println(tiempoDato/1000000);
+      //tomo los datos y los escribo en la sd separado por coma 
+      dato = false;
+    }
 }
