@@ -3,6 +3,10 @@
 #include "SPIFFS.h"
 #include "time.h"
 
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+
 //Variable Wifi
 const char* ssid       = "AndroidAP_4359";
 const char* password   = "RSENSE-2020";
@@ -20,9 +24,20 @@ boolean dato = false;
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 
+//NTP Server:
+const char* ntpServer = "europe.pool.ntp.org";
+const long  gmtOffset_sec = 3600;
+const int   daylightOffset_sec = 3600;
+tm timeinfo;
+int timeMes, timeDia, timeHora;
+
 //variables auxiliares
 boolean datoStart = false;
-String estado;
+String estado;  //movimiento que registra
+char cabecera[60] = "accX,accY,accZ,gyroX,gyroY,gyroZ,Movimiento,Tiempo\n";
+int numRegistros = 0;
+String nombreString;  
+char nombreChar[25];  //Nombre del archivo a guardar en la SD
 
 String processor(const String& var){        
   Serial.println(var);
@@ -42,6 +57,51 @@ void IRAM_ATTR onTimer(){
 
 void IRAM_ATTR onMicroTimer(){
   tiempoDato++;                         //cuenta un microsegundo
+}
+
+void writeFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Writing file: %s\n", path);
+    File file = fs.open(path, FILE_WRITE);
+    if(!file){
+        Serial.println("Failed to open file for writing");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("File written");
+    } else {
+        Serial.println("Write failed");
+    }
+    file.close();
+}
+
+void appendFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Appending to file: %s\n", path);
+
+    File file = fs.open(path, FILE_APPEND);
+    if(!file){
+        Serial.println("Failed to open file for appending");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("Message appended");
+    } else {
+        Serial.println("Append failed");
+    }
+    file.close();
+}
+
+void rutaStart(){
+    tiempoDato = 0;  
+    numRegistros++;
+    getLocalTime(&timeinfo);
+    timeMes = timeinfo.tm_mon;
+    timeDia = timeinfo.tm_mday;
+    timeHora = timeinfo.tm_hour;
+    nombreString = String("/" + String(timeMes) + "-" + String(timeDia) +  "-" + String(timeHora) +  "-" + String(numRegistros) + ".csv");
+    nombreString.toCharArray(nombreChar, 20);
+    //crea fichero en la sd
+    writeFile(SD, nombreChar, cabecera);
+    datoStart = true;
 }
 
 void setup(){
@@ -66,12 +126,21 @@ void setup(){
   timerAlarmWrite(timeTimer, 25, true);               //interrupción cuando llegue a 10 o lo que es lo mismo, 1 micro s
   timerAlarmEnable(timeTimer);
 
+  //Init SD
+  if(!SD.begin()){
+        Serial.println("Card Mount Failed");
+        return;
+    }
+  
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi..");
   }
+
+  //Set up NTP 
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   // Print ESP32 Local IP Address
   Serial.println(WiFi.localIP());
@@ -115,14 +184,11 @@ void setup(){
 
     server.on("/parada", HTTP_GET, [](AsyncWebServerRequest *request){
     datoStart = false;
-    //guarda el fichero en la sd
     request->send(SPIFFS, "/index.html", String(), false, processor);
   });
   
     server.on("/start", HTTP_GET, [](AsyncWebServerRequest *request){
-    tiempoDato = 0; 
-    datoStart = true; 
-    //crea fichero en la sd
+    rutaStart();
     request->send(SPIFFS, "/index.html", String(), false, processor);
   });
 
@@ -135,6 +201,7 @@ void loop(){
       Serial.print("Tomo los valores: ");
       Serial.println(tiempoDato/1000000);
       //tomo los datos y los escribo en la sd separado por coma 
+      appendFile(SD, nombreChar, "World!\n");
       dato = false;
     }
 }
