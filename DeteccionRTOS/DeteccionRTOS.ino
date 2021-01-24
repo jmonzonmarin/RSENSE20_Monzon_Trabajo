@@ -5,7 +5,7 @@
 int pinSCL = 5;
 int pinSDA = 17;
 #define    MPU9250_ADDRESS            0x68    //Direccion del MPU
-#define    ACC_FULL_SCALE_16_G        0x18    //Escala del acelerometro de +/-16g
+#define    ACC_FULL_SCALE_2_G         0x00    //Escala del acelerometro de +/-2g
 #define    A_R         ((32768.0/2.0)/9.8)    //Ratio de conversion
 
 int periodoSensar = 1; 
@@ -14,10 +14,10 @@ int prioridadSensar = 4;
 int periodoVentana = 150;
 int prioridadVentana = 2;
 
-int periodoPreproceso = 180;
+int periodoPreproceso = 150;
 int prioridadPreproceso = 3;
 
-int periodoCalculo = 180;
+int periodoCalculo = 150;
 int prioridadCalculo = 3;
 
 int periodoClasificacion = 150;
@@ -74,7 +74,7 @@ void setup() {
   pinMode(21, OUTPUT);
 
   Wire.begin(pinSDA, pinSCL);
-  I2CwriteByte(MPU9250_ADDRESS, 28, ACC_FULL_SCALE_16_G);
+  I2CwriteByte(MPU9250_ADDRESS, 28, ACC_FULL_SCALE_2_G);
   
   xTaskCreate(sensar,"AAAAAAAA",1000,NULL,prioridadSensar,NULL);  
   xTaskCreate(ventana,"BBBBBBB",10000,NULL,prioridadVentana,NULL);
@@ -93,9 +93,10 @@ void sensar(void *pvParameters){         //declaro la tarea 1
   while (1){
     i++;
     
-    uint8_t aceleracion[6];                               //Creo una cadena de 6 bytes para almacenar las distintas lecturas
+    uint8_t aceleracion[2];                               //Creo una cadena de 6 bytes para almacenar las distintas lecturas
       I2Cread(MPU9250_ADDRESS, 0x3B, 6, aceleracion);
       medidas[i] = (aceleracion[0] << 8 | aceleracion[1])/A_R;  //aX
+      //Serial.println(medidas[i]);
       
     if (i == 2 * ventanaMedidas){
       i = 0;
@@ -187,7 +188,7 @@ void calculoEstadistico(void *pvParameters){         //declaro la tarea 2
 void clasificacion(void *pvParameters){         //declaro la tarea 2
   //String mov = "";
   while(1) {
-    if (desv < 1.5){
+    if (desv < 1){
       if (integral <5000){
         //mov = "Balon parado horizontal";
         Color(0,255,0);   //Verde
@@ -207,10 +208,9 @@ void clasificacion(void *pvParameters){         //declaro la tarea 2
         Color(163, 73, 164); //Morado
       }
     }
-    Serial.println(datos);
-    Serial.println(procesado);    
-    datos = 0;
-    procesado = 0;
+    //Serial.println(desv);
+    Serial.println(integral);
+    //Serial.println("--------");    
     //Serial.println("Tarea de clasificacion");
     vTaskDelay (periodoClasificacion);
   }
