@@ -1,34 +1,43 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <analogWrite.h>
 
 int pinSCL = 5;
 int pinSDA = 17;
 #define    MPU9250_ADDRESS            0x68    //Direccion del MPU
-#define    GYRO_FULL_SCALE_2000_DPS   0x18    //Escala del giroscopo de 2000º/s
 #define    ACC_FULL_SCALE_16_G        0x18    //Escala del acelerometro de +/-16g
 #define    A_R         ((32768.0/2.0)/9.8)    //Ratio de conversion
 
-int16_t aX, aY, aZ, gX, gY, gZ;
+int periodoSensar = 1; 
+int prioridadSensar = 4; 
 
-int periodoSensar = 1000; 
-int prioridadSensar = 1; 
+int periodoVentana = 150;
+int prioridadVentana = 2;
 
-int periodoPreproceso = 200;
-int prioridadPreproceso = 2;
+int periodoPreproceso = 180;
+int prioridadPreproceso = 3;
 
-int periodoClasificacion = 200;
+int periodoCalculo = 180;
+int prioridadCalculo = 3;
+
+int periodoClasificacion = 150;
 int prioridadClasificacion = 2;
 
-int ventanaMedidas = 1000; //1000 por empezar con algo
+int ventanaMedidas = 400; //1000 por empezar con algo
 int ventanaTotal = ventanaMedidas * 2;
-int medidas[2000][6]; //Array de x medidas * 6 lecturas (3 de acelerometro + 3 de giroscopo)
+int medidas[800]; //Como solo me interesa la velocidad en x solo necesito un array
 int pasoTemporal = 1; //tiempo que transcurre entre una medida y la siguiente
+int valorInicial, valorFinal;
 
-boolean primeraMedida,segundaMedida = false;
-boolean terceraMedida = true;
+boolean primeraMedida,segundaMedida,terceraMedida = false;
+boolean cuartaMedida = true;
 
-int IaX,IaY,IaZ,iaX,iaY,iaZ;
-float mediaX,mediaY,mediaZ;
+int datos,procesado = 0;
+
+float iaX[20], IaX;
+int integral;
+float diff, media, Media, desv, desviacion;
+//double desv, desviacion; 
 
 void I2Cread(uint8_t Address, uint8_t Register, uint8_t Nbytes, uint8_t* Data)
 {
@@ -50,18 +59,28 @@ void I2CwriteByte(uint8_t Address, uint8_t Register, uint8_t Data)
    Wire.endTransmission();
 }
 
+void Color(int R, int G, int B){     
+   analogWrite(23, R) ;   // Red 
+   analogWrite(22, G) ;   // Green 
+   analogWrite(21, B) ;   // Blue 
+}
 
 void setup() {
   Serial.begin(115200);
   delay(100);
 
+  pinMode(23, OUTPUT);
+  pinMode(22, OUTPUT);
+  pinMode(21, OUTPUT);
+
   Wire.begin(pinSDA, pinSCL);
   I2CwriteByte(MPU9250_ADDRESS, 28, ACC_FULL_SCALE_16_G);
-  I2CwriteByte(MPU9250_ADDRESS, 27, GYRO_FULL_SCALE_2000_DPS);
   
-  xTaskCreate(sensar,"task1",1000,NULL,prioridadSensar,NULL);   //Nombre de la función, Nombre descriptivo para la tarea 1, este valor indica el numero de palabras que el stack puede soportar, Parametros de entrada de la función, Prioridad de la función (mayor cuanto mayor sea el número), __ 
-  xTaskCreate(preproceso,"task2",1000,NULL,prioridadPreproceso,NULL);
-  xTaskCreate(clasificacion,"task2",1000,NULL,prioridadClasificacion,NULL);  
+  xTaskCreate(sensar,"AAAAAAAA",1000,NULL,prioridadSensar,NULL);  
+  xTaskCreate(ventana,"BBBBBBB",10000,NULL,prioridadVentana,NULL);
+  xTaskCreate(preproceso,"CCCCCCCC",10000,NULL,prioridadPreproceso,NULL);
+  xTaskCreate(calculoEstadistico,"DDDDDDD",1000,NULL,prioridadCalculo,NULL);
+  xTaskCreate(clasificacion,"EEEEEEEE",1000,NULL,prioridadClasificacion,NULL);  
   //vTaskStartScheduler();
 }
 
@@ -73,98 +92,126 @@ void sensar(void *pvParameters){         //declaro la tarea 1
   int i = 0;
   while (1){
     i++;
+    
     uint8_t aceleracion[6];                               //Creo una cadena de 6 bytes para almacenar las distintas lecturas
       I2Cread(MPU9250_ADDRESS, 0x3B, 6, aceleracion);
-      medidas[i][1] = (aceleracion[0] << 8 | aceleracion[1])/A_R;  //aX
-      medidas[i][2] = (aceleracion[2] << 8 | aceleracion[3])/A_R;  //aY
-      medidas[i][3] = (aceleracion[4] << 8 | aceleracion[5])/A_R;  //aZ
-    uint8_t giroscopo[6];
-      I2Cread(MPU9250_ADDRESS, 0x43, 6, giroscopo);
-      medidas[i][4] =  (giroscopo[0] << 8 | giroscopo[1]);         //gX
-      medidas[i][5] =  (giroscopo[2] << 8 | giroscopo[3]);         //gY
-      medidas[i][6] =  (giroscopo[4] << 8 | giroscopo[5]);         //gZ
+      medidas[i] = (aceleracion[0] << 8 | aceleracion[1])/A_R;  //aX
+      
     if (i == 2 * ventanaMedidas){
       i = 0;
     }
+    //Serial.println("Tomo valores");
+    datos++;
     vTaskDelay (periodoSensar);
+  }
+}
+
+void ventana(void *pvParameters){         //declaro la tarea 1
+  int i = 0;
+  while (1){
+    if ((medidas[400] =! '\0') && (cuartaMedida)) {           //primeraVentana 0-50%
+      valorInicial = 0;
+      valorFinal = ventanaMedidas;
+      cuartaMedida = false;
+      primeraMedida = true;
+    
+    } else if ((medidas[600] =! '\0')  && (primeraMedida)) {  //segundaVentana 25-75%
+      valorInicial = ventanaMedidas/2;
+      valorFinal = 3*ventanaMedidas/2;
+      primeraMedida = false;
+      segundaMedida = true;    
+    
+    } else if ((medidas[800] =! '\0')  && (segundaMedida))  {  //terceraVentana 50-100%
+      valorInicial = ventanaMedidas;
+      valorFinal = 2*ventanaMedidas;  
+      segundaMedida = false;
+      terceraMedida = true;  
+  
+    } else if ((medidas[200] =! '\0')  && (terceraMedida))  {  //cuartaVentana 75-25%
+      valorInicial = 3*ventanaMedidas/2;
+      valorFinal = 200;  
+      terceraMedida = false;
+      cuartaMedida = true;  
+    }
+    //Serial.println("Tarea de ventana");
+    vTaskDelay (periodoVentana);
   }
 }
   
 void preproceso(void *pvParameters){         //declaro la tarea 2
-  int valorInicial, valorFinal;
-  
-  if ((medidas[ventanaMedidas][6] =! '\0') && (terceraMedida)) {             //primeraVentana 0-50%
-    valorInicial = 0;
-    valorFinal = ventanaMedidas;
-    terceraMedida = false;
-    primeraMedida = true;
-    
-  } else if ((medidas[3*2*ventanaMedidas/4][6] =! '\0')  && (primeraMedida)) {  //segungaVentana 25-75%
-    valorInicial = ventanaMedidas/4;
-    valorFinal = 3*ventanaMedidas/4;
-    primeraMedida = false;
-    segundaMedida = true;    
-    
-  } else if ((medidas[2*ventanaMedidas][6] =! '\0')  && (segundaMedida))  {  //segungaVentana 50-100%
-    valorInicial = ventanaMedidas;
-    valorFinal = 2 * ventanaMedidas;  
-    segundaMedida = false;
-    terceraMedida = true;  
-  
-  }
-
-    //Calculo de la derivada
-    for  (int aux = valorInicial ; aux == valorFinal ; aux++) {
-//      daX = sqrt( (medidas[aux+1][1] - medidas[aux][1])^2 + (pasoTemporal)^2 );
-//      daY = sqrt( (medidas[aux+1][2] - medidas[aux][2])^2 + (pasoTemporal)^2 );
-//      daZ = sqrt( (medidas[aux+1][3] - medidas[aux][3])^2 + (pasoTemporal)^2 );
-
-      iaX =+ medidas[aux][1]; 
-      iaY =+ medidas[aux][2];
-      iaZ =+ medidas[aux][3];
-      
-//      dgX = sqrt( (medidas[aux+1][4] - medidas[aux][4])^2 + (pasoTemporal)^2 );
-//      dgY = sqrt( (medidas[aux+1][5] - medidas[aux][5])^2 + (pasoTemporal)^2 );
-//      dgZ = sqrt( (medidas[aux+1][6] - medidas[aux][6])^2 + (pasoTemporal)^2 );
-
-      for (int cnt = 1; cnt ==6; aux++){                                   //Una vez he leido el valor 
-        medidas[aux][cnt] = '\0';
+  int aux;
+  while(1){
+    for  (int i = 0 ; i < 400 ; i = i + 20) {      //Leo todos los datos disponibles la ventana de 400 datos
+      aux = valorInicial + i;                      //Para no tener problemas de overflow creo una variable auxiliar con la que accedere a los datos
+      if (aux >= 800){                             //Si intento leer la posición 800 (no existe) leere la pos 0, evitando asi el overflow
+        aux = aux - 800;
       }
+      
+      for (int j = 0; j < 20; j++){                                         //Divido la ventana en subventanas de 20 datos cada una.
+        if (aux == 0){                                                      //Aunque pueda calcular la desviación con todos los datos
+          iaX[aux] =+ medidas[aux+j];                                       //si la acción es muy rapida puede quedar amortiguada por los valores normales
+        } else {
+          iaX[aux/20] =+ medidas[aux+j]; 
+        }
+        IaX =+ medidas[aux+j];
+        medidas[aux+i] = '\0';
+      }
+      media =+ iaX[aux/20]/20;        //Divido la integral entre 20 para obtener la media de la muestra                           
     }
-
-    IaX = iaX;
-    IaY = iaY;
-    IaZ = iaZ;
-
-    mediaX = IaX/1000;
-    mediaY = IaZ/1000;
-    mediaZ = IaZ/1000; 
-
-    iaX = 0;
-    iaY = 0;
-    iaZ = 0;
-   
+    integral = IaX;
+    Media = media/20;        //En este momento media (a la dch de la expresion) es la suma de las veinte medias realizadas hasta ahora. 
+    IaX = 0;
+    media = 0;                         //(Lo que equivale al numerador de la ecuación) al dividirlo entre 20 estoy obteniendo la media de las muestras
     vTaskDelay (periodoPreproceso);
-  
+    //Serial.println("PPPPPPPPPPPPPPPPPPPPPPPPPPPPPP");
+  }
+}
+
+void calculoEstadistico(void *pvParameters){         //declaro la tarea 2
+  while(1){
+    
+    for (int i = 0; i < 20; i++){
+      diff = (iaX[i]/20) - Media;
+      desv = desv + pow(diff,2.0); 
+    }
+    
+    desv = sqrt(desv/(20 - 1)); //calculo de la desviacion
+    desviacion = desv;
+    desv = 0;
+    //Serial.println("PROCESADO");
+    procesado++;
+    vTaskDelay (periodoCalculo);
+  }
 }
 
 void clasificacion(void *pvParameters){         //declaro la tarea 2
-  String movimiento;
+  //String mov = "";
   while(1) {
-    if ( (mediaX < 46) && (mediaX > 23) ) {
-      movimiento = "globo";
-    }
-
-    if ( (mediaZ < 11) && (mediaZ > 6) ) {
-      movimiento = "pase";
-    }
-
-    if ( (mediaZ < 32) && (mediaZ > 15) ) {
-      if ( (mediaY < 27) && (mediaY > 15) ) {
-          movimiento = "placaje";
+    if (desv < 1.5){
+      if (integral <5000){
+        //mov = "Balon parado horizontal";
+        Color(0,255,0);   //Verde
+      } else{
+        //mov = "Balon parado vertical";
+        Color(0,0,255);    //Azul
+      }
+    } else {
+      if (integral <5000){
+        //mov = "Pase";
+        Color(255,117,020);  //Naranja
+      } else if (integral <6800){
+        //mov = "Globo";
+        Color(255,0,0);     //Rojo
+      } else {
+        //mov = "Placaje";
+        Color(163, 73, 164); //Morado
       }
     }
-
-    }
+    Serial.println(datos);
+    Serial.println(procesado);    
+    datos = 0;
+    procesado = 0;
+    //Serial.println("Tarea de clasificacion");
     vTaskDelay (periodoClasificacion);
+  }
 }
