@@ -30,8 +30,8 @@ int datos,procesado = 0;
 
 float iaX[20], IaX;
 int integral;
-float diff, media, Media, desv, desviacion;
-//double desv, desviacion; 
+float diff, media, Media;
+double desv, desv1, desviacion; 
 
 void I2Cread(uint8_t Address, uint8_t Register, uint8_t Nbytes, uint8_t* Data)
 {
@@ -130,39 +130,33 @@ void ventana(void *pvParameters){         //declaro la tarea 1
       cuartaMedida = true;  
     }
 
-    for  (int i = 0 ; i < 400 ; i = i + 20) {      //Leo todos los datos disponibles la ventana de 400 datos
+    for  (int i = 0 ; i < 400 ; i++) {      //Leo todos los datos disponibles la ventana de 400 datos
       aux = valorInicial + i;                      //Para no tener problemas de overflow creo una variable auxiliar con la que accedere a los datos
       if (aux >= 800){                             //Si intento leer la posición 800 (no existe) leere la pos 0, evitando asi el overflow
         aux = aux - 800;
       }
-      
-      for (int j = 0; j < 20; j++){                                         //Divido la ventana en subventanas de 20 datos cada una.
-        if (aux == 0){                                                      //Aunque pueda calcular la desviación con todos los datos
-          iaX[aux] =+ medidas[aux+j];                                       //si la acción es muy rapida puede quedar amortiguada por los valores normales
-        } else {
-          iaX[aux/20] =+ medidas[aux+j]; 
-        }
-        IaX += medidas[aux+j];
-        medidas[aux+j] = '\0';
-      }
-      media += iaX[aux/20]/20;        //Divido la integral entre 20 para obtener la media de la muestra                           
+    IaX = IaX + medidas[aux]; 
     }
-    
     integral = IaX;
-    Media = media/20;        //En este momento media (a la dch de la expresion) es la suma de las veinte medias realizadas hasta ahora. 
+    Serial.print("P:");
+    Serial.println(integral);
+    Serial.println("----------");
+    Media = integral/400;        
     IaX = 0;
-    media = 0;                         //(Lo que equivale al numerador de la ecuación) al dividirlo entre 20 estoy obteniendo la media de las muestras
-    //Serial.println("Tarea de ventana");
 
-    for (int i = 0; i < 20; i++){
-      diff = (iaX[i]/20) - Media;
-      Serial.println(diff);
-      desv = desv + pow(diff,2.0); 
+    for (int i = 0; i < 400; i++){
+      int aux2;
+      aux2 = valorInicial + i;                      
+      if (aux2 >= 800){                             
+        aux2 = aux2 - 800;
+      }
+      diff = (medidas[aux2]) - Media;
+      desv1 = desv1 + pow(diff,2.0); 
     }
     
-    desv = sqrt(desv/(20 - 1)); //calculo de la desviacion
+    desv = sqrt(desv1/(20 - 1)); //calculo de la desviacion
     desviacion = desv;
-    desv = 0;
+    desv1 = 0;
     
     vTaskDelay (periodoVentana);
   }
@@ -171,7 +165,7 @@ void ventana(void *pvParameters){         //declaro la tarea 1
 void clasificacion(void *pvParameters){         //declaro la tarea 2
   //String mov = "";
   while(1) {
-    if (desv < 1){
+    if (desv < 7.5){
       if (integral <5200){
         //mov = "Balon parado horizontal";
         Color(0,255,0);   //Verde
@@ -191,7 +185,8 @@ void clasificacion(void *pvParameters){         //declaro la tarea 2
         Color(163, 73, 164); //Morado
       }
     }
-    //Serial.println(desv);
+    Serial.print("C:");
+    Serial.println(desv);
     //Serial.println(integral);
     //Serial.println("--------");    
     //Serial.println("Tarea de clasificacion");
