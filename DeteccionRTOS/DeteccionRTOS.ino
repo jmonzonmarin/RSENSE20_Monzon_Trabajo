@@ -9,19 +9,13 @@ int pinSDA = 17;
 #define    A_R         ((32768.0/2.0)/9.8)    //Ratio de conversion
 
 int periodoSensar = 1; 
-int prioridadSensar = 4; 
+int prioridadSensar = 3; 
 
 int periodoVentana = 150;
 int prioridadVentana = 2;
 
-int periodoPreproceso = 150;
-int prioridadPreproceso = 3;
-
-int periodoCalculo = 150;
-int prioridadCalculo = 3;
-
 int periodoClasificacion = 150;
-int prioridadClasificacion = 2;
+int prioridadClasificacion = 1;
 
 int ventanaMedidas = 400; //1000 por empezar con algo
 int ventanaTotal = ventanaMedidas * 2;
@@ -77,9 +71,9 @@ void setup() {
   I2CwriteByte(MPU9250_ADDRESS, 28, ACC_FULL_SCALE_2_G);
   
   xTaskCreate(sensar,"AAAAAAAA",1000,NULL,prioridadSensar,NULL);  
-  xTaskCreate(ventana,"BBBBBBB",10000,NULL,prioridadVentana,NULL);
-  xTaskCreate(preproceso,"CCCCCCCC",10000,NULL,prioridadPreproceso,NULL);
-  xTaskCreate(calculoEstadistico,"DDDDDDD",1000,NULL,prioridadCalculo,NULL);
+  xTaskCreate(ventana,"BBBBBBB",100000,NULL,prioridadVentana,NULL);
+//  xTaskCreate(preproceso,"CCCCCCCC",10000,NULL,prioridadPreproceso,NULL);
+//  xTaskCreate(calculoEstadistico,"DDDDDDD",1000,NULL,prioridadCalculo,NULL);
   xTaskCreate(clasificacion,"EEEEEEEE",1000,NULL,prioridadClasificacion,NULL);  
   //vTaskStartScheduler();
 }
@@ -109,6 +103,7 @@ void sensar(void *pvParameters){         //declaro la tarea 1
 
 void ventana(void *pvParameters){         //declaro la tarea 1
   int i = 0;
+  int aux;
   while (1){
     if ((medidas[400] =! '\0') && (cuartaMedida)) {           //primeraVentana 0-50%
       valorInicial = 0;
@@ -134,14 +129,7 @@ void ventana(void *pvParameters){         //declaro la tarea 1
       terceraMedida = false;
       cuartaMedida = true;  
     }
-    //Serial.println("Tarea de ventana");
-    vTaskDelay (periodoVentana);
-  }
-}
-  
-void preproceso(void *pvParameters){         //declaro la tarea 2
-  int aux;
-  while(1){
+
     for  (int i = 0 ; i < 400 ; i = i + 20) {      //Leo todos los datos disponibles la ventana de 400 datos
       aux = valorInicial + i;                      //Para no tener problemas de overflow creo una variable auxiliar con la que accedere a los datos
       if (aux >= 800){                             //Si intento leer la posición 800 (no existe) leere la pos 0, evitando asi el overflow
@@ -154,34 +142,29 @@ void preproceso(void *pvParameters){         //declaro la tarea 2
         } else {
           iaX[aux/20] =+ medidas[aux+j]; 
         }
-        IaX =+ medidas[aux+j];
-        medidas[aux+i] = '\0';
+        IaX += medidas[aux+j];
+        medidas[aux+j] = '\0';
       }
-      media =+ iaX[aux/20]/20;        //Divido la integral entre 20 para obtener la media de la muestra                           
+      media += iaX[aux/20]/20;        //Divido la integral entre 20 para obtener la media de la muestra                           
     }
+    
     integral = IaX;
     Media = media/20;        //En este momento media (a la dch de la expresion) es la suma de las veinte medias realizadas hasta ahora. 
     IaX = 0;
     media = 0;                         //(Lo que equivale al numerador de la ecuación) al dividirlo entre 20 estoy obteniendo la media de las muestras
-    vTaskDelay (periodoPreproceso);
-    //Serial.println("PPPPPPPPPPPPPPPPPPPPPPPPPPPPPP");
-  }
-}
+    //Serial.println("Tarea de ventana");
 
-void calculoEstadistico(void *pvParameters){         //declaro la tarea 2
-  while(1){
-    
     for (int i = 0; i < 20; i++){
       diff = (iaX[i]/20) - Media;
+      Serial.println(diff);
       desv = desv + pow(diff,2.0); 
     }
     
     desv = sqrt(desv/(20 - 1)); //calculo de la desviacion
     desviacion = desv;
     desv = 0;
-    //Serial.println("PROCESADO");
-    procesado++;
-    vTaskDelay (periodoCalculo);
+    
+    vTaskDelay (periodoVentana);
   }
 }
 
@@ -189,7 +172,7 @@ void clasificacion(void *pvParameters){         //declaro la tarea 2
   //String mov = "";
   while(1) {
     if (desv < 1){
-      if (integral <5000){
+      if (integral <5200){
         //mov = "Balon parado horizontal";
         Color(0,255,0);   //Verde
       } else{
@@ -209,7 +192,7 @@ void clasificacion(void *pvParameters){         //declaro la tarea 2
       }
     }
     //Serial.println(desv);
-    Serial.println(integral);
+    //Serial.println(integral);
     //Serial.println("--------");    
     //Serial.println("Tarea de clasificacion");
     vTaskDelay (periodoClasificacion);
